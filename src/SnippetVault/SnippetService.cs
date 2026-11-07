@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace SnippetVault;
 
 /// <summary>All snippet operations. Pure logic over <see cref="SnippetStore"/> —
@@ -155,6 +157,67 @@ public sealed class SnippetService
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.Tag)
             .ToList();
+    }
+
+    public StatsReport Stats()
+    {
+        var all = _store.Load();
+        return new StatsReport(
+            Total: all.Count,
+            Favorites: all.Count(s => s.Favorite),
+            TotalUses: all.Sum(s => s.UseCount),
+            ByLanguage: all.GroupBy(s => s.Language)
+                .Select(g => (Language: g.Key, Count: g.Count()))
+                .OrderByDescending(x => x.Count).ToList(),
+            TopTags: TagCounts().Take(5).ToList(),
+            MostUsed: all.OrderByDescending(s => s.UseCount).Take(5).ToList());
+    }
+
+    /// <summary>Writes every snippet to a JSON file (same shape as the store).</summary>
+    public void Export(string filePath)
+    {
+        var json = JsonSerializer.Serialize(_store.Load(), new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+        File.WriteAllText(filePath, json);
+    }
+
+    /// <summary>
+    /// Reads snippets from a JSON file. With <paramref name="replace"/> the
+    /// library is swapped wholesale; otherwise incoming snippets are merged in
+    /// and clashing ids get fresh ones. Returns (imported, skipped).
+    /// </summary>
+    public (int Imported, int Skipped) Import(string filePath, bool replace)
+    {
+        var incoming = JsonSerializer.Deserialize<List<Snippet>>(
+            File.ReadAllText(filePath),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase })
+            ?? new List<Snippet>();
+
+        var existing = replace ? new List<Snippet>() : _store.Load();
+        var knownIds = existing.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var imported = 0;
+        var skipped = 0;
+
+        foreach (var snippet in incoming)
+        {
+            if (string.IsNullOrWhiteSpace(snippet.Title) || string.IsNullOrWhiteSpace(snippet.Code))
+            {
+                skipped++;
+                continue;
+            }
+            snippet.Normalize();
+            if (knownIds.Contains(snippet.Id))
+                snippet.Id = Guid.NewGuid().ToString("N")[..8];
+            knownIds.Add(snippet.Id);
+            existing.Add(snippet);
+            imported++;
+        }
+
+        _store.Save(existing);
+        return (imported, skipped);
     }
 
     private static List<string> Tokenize(string query) =>

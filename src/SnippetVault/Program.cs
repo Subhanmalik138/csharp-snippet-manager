@@ -55,6 +55,9 @@ internal static class Program
                 "unfav" => Favorite(service, cmdArgs, false),
                 "use" => Use(service, cmdArgs),
                 "tags" => Tags(service, cmdArgs),
+                "stats" => Stats(service, cmdArgs),
+                "export" => Export(service, cmdArgs),
+                "import" => Import(service, cmdArgs),
                 _ => Unknown(command),
             };
         }
@@ -88,6 +91,9 @@ internal static class Program
               unfav   <id>                     remove favorite
               use     <id>                     print just the code, count the use
               tags                             list every tag with its snippet count
+              stats                            library totals, top languages and most-used
+              export  --file F                 dump the whole library to JSON
+              import  --file F [--replace]     merge a JSON dump in (or replace the library)
 
             Global options:
               --data <path>   snippet database file (default ~/.snippetvault/snippets.json,
@@ -224,6 +230,47 @@ internal static class Program
         }
         foreach (var (tag, count) in tags)
             Console.WriteLine($"#{tag}  ({count})");
+        return 0;
+    }
+
+    private static int Stats(SnippetService service, Args args)
+    {
+        var stats = service.Stats();
+        Console.WriteLine($"Snippets: {stats.Total}   Favorites: {stats.Favorites}   Total uses: {stats.TotalUses}");
+        Console.WriteLine();
+        Console.WriteLine("By language:");
+        foreach (var (language, count) in stats.ByLanguage)
+            Console.WriteLine($"  {language}  ({count})");
+        if (stats.TopTags.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Top tags:");
+            foreach (var (tag, count) in stats.TopTags)
+                Console.WriteLine($"  #{tag}  ({count})");
+        }
+        if (stats.MostUsed.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Most used:");
+            foreach (var s in stats.MostUsed)
+                Console.WriteLine($"  {FormatRow(s)}");
+        }
+        return 0;
+    }
+
+    private static int Export(SnippetService service, Args args)
+    {
+        var file = args.Option("file") ?? throw new ArgumentException("export needs --file <path>.");
+        service.Export(file);
+        Console.WriteLine($"exported to {file}");
+        return 0;
+    }
+
+    private static int Import(SnippetService service, Args args)
+    {
+        var file = args.Option("file") ?? throw new ArgumentException("import needs --file <path>.");
+        var (imported, skipped) = service.Import(file, args.Has("replace"));
+        Console.WriteLine($"imported {imported} snippet(s), skipped {skipped}");
         return 0;
     }
 
