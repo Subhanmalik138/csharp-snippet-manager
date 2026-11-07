@@ -50,6 +50,11 @@ internal static class Program
                 "show" => Show(service, cmdArgs),
                 "delete" => Delete(service, cmdArgs),
                 "edit" => Edit(service, cmdArgs),
+                "search" => Search(service, cmdArgs),
+                "fav" => Favorite(service, cmdArgs, true),
+                "unfav" => Favorite(service, cmdArgs, false),
+                "use" => Use(service, cmdArgs),
+                "tags" => Tags(service, cmdArgs),
                 _ => Unknown(command),
             };
         }
@@ -76,8 +81,13 @@ internal static class Program
               add     --title T --lang L (--code C | --file F) [--tags a,b] [--desc D]
               list    [--lang L] [--tag T] [--favorites] [--sort recent|title|uses]
               show    <id>                     print one snippet with its code
+              search  <query> [--lang L]       full-text search, best match first
               edit    <id> [--title T] [--lang L] [--code C | --file F] [--tags a,b] [--desc D]
               delete  <id>
+              fav     <id>                     mark as favorite
+              unfav   <id>                     remove favorite
+              use     <id>                     print just the code, count the use
+              tags                             list every tag with its snippet count
 
             Global options:
               --data <path>   snippet database file (default ~/.snippetvault/snippets.json,
@@ -155,6 +165,65 @@ internal static class Program
             Console.WriteLine(snippet.Description);
         Console.WriteLine(new string('-', 40));
         Console.WriteLine(snippet.Code);
+        return 0;
+    }
+
+    private static int Search(SnippetService service, Args args)
+    {
+        if (args.Positionals.Count == 0)
+            throw new ArgumentException("search needs a query: `snippetvault search <query>`.");
+        var query = string.Join(" ", args.Positionals);
+        var results = service.Search(query, args.Option("lang"));
+        if (results.Count == 0)
+        {
+            Console.WriteLine($"No snippets match '{query}'.");
+            return 0;
+        }
+        foreach (var s in results)
+            Console.WriteLine(FormatRow(s));
+        Console.WriteLine($"{results.Count} match(es)");
+        return 0;
+    }
+
+    private static int Favorite(SnippetService service, Args args, bool favorite)
+    {
+        if (args.Positionals.Count == 0)
+            throw new ArgumentException("fav/unfav needs an id.");
+        var snippet = service.SetFavorite(args.Positionals[0], favorite);
+        if (snippet is null)
+        {
+            Console.Error.WriteLine($"error: no snippet with id '{args.Positionals[0]}'.");
+            return 1;
+        }
+        Console.WriteLine(favorite ? $"★ [{snippet.Id}] {snippet.Title}" : $"☆ [{snippet.Id}] {snippet.Title}");
+        return 0;
+    }
+
+    private static int Use(SnippetService service, Args args)
+    {
+        if (args.Positionals.Count == 0)
+            throw new ArgumentException("use needs an id: `snippetvault use <id>`.");
+        var snippet = service.RecordUse(args.Positionals[0]);
+        if (snippet is null)
+        {
+            Console.Error.WriteLine($"error: no snippet with id '{args.Positionals[0]}'.");
+            return 1;
+        }
+        // Raw code only, so the output pipes straight into a clipboard or file.
+        Console.Write(snippet.Code);
+        return 0;
+    }
+
+    private static int Tags(SnippetService service, Args args)
+    {
+        var tags = service.TagCounts();
+        if (tags.Count == 0)
+        {
+            Console.WriteLine("No tags yet.");
+            return 0;
+        }
+        foreach (var (tag, count) in tags)
+            Console.WriteLine($"#{tag}  ({count})");
         return 0;
     }
 

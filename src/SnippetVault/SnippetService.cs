@@ -90,4 +90,79 @@ public sealed class SnippetService
         _store.Save(all);
         return snippet;
     }
+
+    /// <summary>
+    /// Full-text search. Every query token must appear somewhere; results are
+    /// ranked by where tokens matched — title (3) and tags/description (2)
+    /// outrank a match inside the code (1).
+    /// </summary>
+    public IReadOnlyList<Snippet> Search(string query, string? language = null)
+    {
+        var tokens = Tokenize(query);
+        if (tokens.Count == 0)
+            return Array.Empty<Snippet>();
+
+        var all = _store.Load().AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(language))
+            all = all.Where(s => s.Language.Equals(language.Trim().ToLowerInvariant(), StringComparison.Ordinal));
+
+        var scored = new List<(Snippet Snippet, int Score)>();
+        foreach (var s in all)
+        {
+            var score = 0;
+            foreach (var token in tokens)
+            {
+                var inTitle = ContainsToken(s.Title, token);
+                var inTags = s.Tags.Any(t => t.Contains(token, StringComparison.OrdinalIgnoreCase));
+                var inDesc = ContainsToken(s.Description, token);
+                var inCode = s.Code.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+                if (!inTitle && !inTags && !inDesc && !inCode)
+                {
+                    score = -1; // token missing entirely: snippet does not match
+                    break;
+                }
+                if (inTitle) score += 3;
+                if (inTags) score += 2;
+                if (inDesc) score += 2;
+                if (inCode) score += 1;
+            }
+            if (score > 0)
+                scored.Add((s, score));
+        }
+
+        return scored
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Snippet.UseCount)
+            .Select(x => x.Snippet)
+            .ToList();
+    }
+
+    public Snippet? SetFavorite(string idOrPrefix, bool favorite) =>
+        Update(idOrPrefix, s => s.Favorite = favorite);
+
+    /// <summary>Bumps the use counter and returns the snippet (for `use`).</summary>
+    public Snippet? RecordUse(string idOrPrefix) =>
+        Update(idOrPrefix, s => s.UseCount++);
+
+    /// <summary>All tags with how many snippets carry each, most used first.</summary>
+    public IReadOnlyList<(string Tag, int Count)> TagCounts()
+    {
+        return _store.Load()
+            .SelectMany(s => s.Tags)
+            .GroupBy(t => t)
+            .Select(g => (Tag: g.Key, Count: g.Count()))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Tag)
+            .ToList();
+    }
+
+    private static List<string> Tokenize(string query) =>
+        query.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.ToLowerInvariant())
+            .Distinct()
+            .ToList();
+
+    private static bool ContainsToken(string text, string token) =>
+        text.Contains(token, StringComparison.OrdinalIgnoreCase);
 }
